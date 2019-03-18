@@ -26,6 +26,11 @@ func GetAccessToken(accountname string, min_valid_period uint64, scope string, a
 	return tokenResponse.Token, err
 }
 
+func GetAccessTokenByIssuerUrl(issuer_url string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
+	tokenResponse, err := GetTokenResponseByIssuerUrl(issuer_url, min_valid_period, scope, application_hint)
+	return tokenResponse.Token, err
+}
+
 func communicateWithSock(request string) (response []byte, e error) {
 	socketValue, socketSet := os.LookupEnv("OIDC_SOCK")
 	if !socketSet {
@@ -60,6 +65,29 @@ func GetTokenResponse(accountname string, min_valid_period uint64, scope string,
 
 	//TODO scope and application hint only needed if not empty
 	ipcReq := fmt.Sprintf(`{"request":"access_token","account":"%s","min_valid_period":%d,"scope":"%s","application_hint":"%s"}`, accountname, min_valid_period, scope, application_hint)
+
+	response, err := communicateWithSock(ipcReq)
+	if err != nil {
+		return tokenResponse, err
+	}
+
+	var res tmp_TokenResponse
+	jsonErr := json.Unmarshal(response, &res)
+	if jsonErr != nil {
+		fmt.Fprintf(os.Stderr, "error parsing the response from oidc-agent: %s\n", jsonErr)
+		return tokenResponse, jsonErr
+	}
+	tokenResponse.Token = res.Token
+	tokenResponse.Issuer = res.Issuer
+	tokenResponse.Expires_At = time.Unix(res.Expires_At, 0)
+	return tokenResponse, err
+}
+
+//TODO error handling
+func GetTokenResponseByIssuerUrl(issuer string, min_valid_period uint64, scope string, application_hint string) (tokenResponse TokenResponse, e error) {
+
+	//TODO scope and application hint only needed if not empty
+	ipcReq := fmt.Sprintf(`{"request":"access_token","issuer":"%s","min_valid_period":%d,"scope":"%s","application_hint":"%s"}`, issuer, min_valid_period, scope, application_hint)
 
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
