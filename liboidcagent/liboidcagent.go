@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"time"
@@ -19,6 +20,28 @@ type tmp_TokenResponse struct {
 	Token      string `json:"access_token"`
 	Issuer     string `json:"issuer"`
 	Expires_At int64  `json:"expires_at"`
+}
+
+func _createTokenRequest(requestPartAccIss string, min_valid_period uint64, scope string, application_hint string) string {
+	requestPartScope := ""
+	if scope != "" {
+		requestPartScope = fmt.Sprintf(`,"scope":"%s"`, scope)
+	}
+	requestPartApplicationHint := ""
+	if application_hint != "" {
+		requestPartScope = fmt.Sprintf(`,"application_hint":"%s"`, application_hint)
+	}
+	return fmt.Sprintf(`{"request":"access_token"%s,"min_valid_period":%d%s%s}`, requestPartAccIss, min_valid_period, requestPartScope, requestPartApplicationHint)
+}
+
+func createTokenRequestAccount(accountname string, min_valid_period uint64, scope string, application_hint string) string {
+	requestPartAcc := fmt.Sprintf(`,"account":"%s"`, accountname)
+	return _createTokenRequest(requestPartAcc, min_valid_period, scope, application_hint)
+}
+
+func createTokenRequestIssuer(issuer string, min_valid_period uint64, scope string, application_hint string) string {
+	requestPartIss := fmt.Sprintf(`,"issuer":"%s"`, issuer)
+	return _createTokenRequest(requestPartIss, min_valid_period, scope, application_hint)
 }
 
 func GetAccessToken(accountname string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
@@ -50,22 +73,17 @@ func communicateWithSock(request string) (response []byte, e error) {
 		fmt.Fprintf(os.Stderr, "could not write to socket %s: %s\n", socketValue, err.Error())
 		return response, err
 	}
-	var res = [4096]byte{}
-	length, err := c.Read(res[0:4095])
+	res, err := ioutil.ReadAll(c)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not read from socket %s: %s\n", socketValue, err.Error())
 		return response, err
 	}
-	res[length] = 0
-	return res[:length], nil
+	return res, nil
 }
 
 //TODO error handling
 func GetTokenResponse(accountname string, min_valid_period uint64, scope string, application_hint string) (tokenResponse TokenResponse, e error) {
-
-	//TODO scope and application hint only needed if not empty
-	ipcReq := fmt.Sprintf(`{"request":"access_token","account":"%s","min_valid_period":%d,"scope":"%s","application_hint":"%s"}`, accountname, min_valid_period, scope, application_hint)
-
+	ipcReq := createTokenRequestAccount(accountname, min_valid_period, scope, application_hint)
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
 		return tokenResponse, err
@@ -85,10 +103,7 @@ func GetTokenResponse(accountname string, min_valid_period uint64, scope string,
 
 //TODO error handling
 func GetTokenResponseByIssuerUrl(issuer string, min_valid_period uint64, scope string, application_hint string) (tokenResponse TokenResponse, e error) {
-
-	//TODO scope and application hint only needed if not empty
-	ipcReq := fmt.Sprintf(`{"request":"access_token","issuer":"%s","min_valid_period":%d,"scope":"%s","application_hint":"%s"}`, issuer, min_valid_period, scope, application_hint)
-
+	ipcReq := createTokenRequestIssuer(issuer, min_valid_period, scope, application_hint)
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
 		return tokenResponse, err
