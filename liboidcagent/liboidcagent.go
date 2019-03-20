@@ -44,16 +44,7 @@ func createTokenRequestIssuer(issuer string, min_valid_period uint64, scope stri
 	return _createTokenRequest(requestPartIss, min_valid_period, scope, application_hint)
 }
 
-func GetAccessToken(accountname string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
-	tokenResponse, err := GetTokenResponse(accountname, min_valid_period, scope, application_hint)
-	return tokenResponse.Token, err
-}
-
-func GetAccessTokenByIssuerUrl(issuer_url string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
-	tokenResponse, err := GetTokenResponseByIssuerUrl(issuer_url, min_valid_period, scope, application_hint)
-	return tokenResponse.Token, err
-}
-
+//TODO error handling
 func communicateWithSock(request string) (response []byte, e error) {
 	socketValue, socketSet := os.LookupEnv("OIDC_SOCK")
 	if !socketSet {
@@ -81,42 +72,43 @@ func communicateWithSock(request string) (response []byte, e error) {
 	return res, nil
 }
 
-//TODO error handling
+func parseIpcResponse(response []byte) (tokenResponse TokenResponse, e error) {
+	var res tmp_TokenResponse
+	jsonErr := json.Unmarshal(response, &res)
+	if jsonErr != nil {
+		fmt.Fprintf(os.Stderr, "error parsing the response from oidc-agent: %s\n", jsonErr)
+		return tokenResponse, jsonErr
+	}
+	tokenResponse.Token = res.Token
+	tokenResponse.Issuer = res.Issuer
+	tokenResponse.Expires_At = time.Unix(res.Expires_At, 0)
+	return tokenResponse, e
+}
+
 func GetTokenResponse(accountname string, min_valid_period uint64, scope string, application_hint string) (tokenResponse TokenResponse, e error) {
 	ipcReq := createTokenRequestAccount(accountname, min_valid_period, scope, application_hint)
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
 		return tokenResponse, err
 	}
-
-	var res tmp_TokenResponse
-	jsonErr := json.Unmarshal(response, &res)
-	if jsonErr != nil {
-		fmt.Fprintf(os.Stderr, "error parsing the response from oidc-agent: %s\n", jsonErr)
-		return tokenResponse, jsonErr
-	}
-	tokenResponse.Token = res.Token
-	tokenResponse.Issuer = res.Issuer
-	tokenResponse.Expires_At = time.Unix(res.Expires_At, 0)
-	return tokenResponse, err
+	return parseIpcResponse(response)
 }
 
-//TODO error handling
 func GetTokenResponseByIssuerUrl(issuer string, min_valid_period uint64, scope string, application_hint string) (tokenResponse TokenResponse, e error) {
 	ipcReq := createTokenRequestIssuer(issuer, min_valid_period, scope, application_hint)
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
 		return tokenResponse, err
 	}
+	return parseIpcResponse(response)
+}
 
-	var res tmp_TokenResponse
-	jsonErr := json.Unmarshal(response, &res)
-	if jsonErr != nil {
-		fmt.Fprintf(os.Stderr, "error parsing the response from oidc-agent: %s\n", jsonErr)
-		return tokenResponse, jsonErr
-	}
-	tokenResponse.Token = res.Token
-	tokenResponse.Issuer = res.Issuer
-	tokenResponse.Expires_At = time.Unix(res.Expires_At, 0)
-	return tokenResponse, err
+func GetAccessToken(accountname string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
+	tokenResponse, err := GetTokenResponse(accountname, min_valid_period, scope, application_hint)
+	return tokenResponse.Token, err
+}
+
+func GetAccessTokenByIssuerUrl(issuer_url string, min_valid_period uint64, scope string, application_hint string) (token string, err error) {
+	tokenResponse, err := GetTokenResponseByIssuerUrl(issuer_url, min_valid_period, scope, application_hint)
+	return tokenResponse.Token, err
 }
