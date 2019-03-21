@@ -26,7 +26,7 @@ type rawTokenResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func _createTokenRequest(requestPartAccIss string, minValidPeriod uint64, scope string, applicationHint string) string {
+func createTokenRequest(requestPartAccIss string, minValidPeriod uint64, scope string, applicationHint string) string {
 	requestPartScope := ""
 	if scope != "" {
 		requestPartScope = fmt.Sprintf(`,"scope":"%s"`, scope)
@@ -40,12 +40,12 @@ func _createTokenRequest(requestPartAccIss string, minValidPeriod uint64, scope 
 
 func createTokenRequestAccount(accountname string, minValidPeriod uint64, scope string, applicationHint string) string {
 	requestPartAcc := fmt.Sprintf(`,"account":"%s"`, accountname)
-	return _createTokenRequest(requestPartAcc, minValidPeriod, scope, applicationHint)
+	return createTokenRequest(requestPartAcc, minValidPeriod, scope, applicationHint)
 }
 
 func createTokenRequestIssuer(issuer string, minValidPeriod uint64, scope string, applicationHint string) string {
 	requestPartIss := fmt.Sprintf(`,"issuer":"%s"`, issuer)
-	return _createTokenRequest(requestPartIss, minValidPeriod, scope, applicationHint)
+	return createTokenRequest(requestPartIss, minValidPeriod, scope, applicationHint)
 }
 
 func communicateWithSock(request string) (response []byte, err error) {
@@ -97,7 +97,7 @@ func parseIpcResponse(response []byte) (tokenResponse TokenResponse, err error) 
 	return
 }
 
-func GetTokenResponse(accountname string, minValidPeriod uint64, scope, applicationHint string) (resp TokenResponse, err error) {
+func getTokenResponse(accountname string, minValidPeriod uint64, scope, applicationHint string) (resp TokenResponse, err error) {
 	ipcReq := createTokenRequestAccount(accountname, minValidPeriod, scope, applicationHint)
 	ipcResponse, err := communicateWithSock(ipcReq)
 	if err != nil {
@@ -107,7 +107,7 @@ func GetTokenResponse(accountname string, minValidPeriod uint64, scope, applicat
 	return
 }
 
-func GetTokenResponseByIssuerUrl(issuer string, minValidPeriod uint64, scope, applicationHint string) (tokenResponse TokenResponse, err error) {
+func getTokenResponseByIssuerURL(issuer string, minValidPeriod uint64, scope, applicationHint string) (tokenResponse TokenResponse, err error) {
 	ipcReq := createTokenRequestIssuer(issuer, minValidPeriod, scope, applicationHint)
 	response, err := communicateWithSock(ipcReq)
 	if err != nil {
@@ -118,12 +118,14 @@ func GetTokenResponseByIssuerUrl(issuer string, minValidPeriod uint64, scope, ap
 	return
 }
 
+// GetAccessToken gets an access token by accountname
 func GetAccessToken(accountname string, minValidPeriod uint64, scope, applicationHint string) (token string, err error) {
-	tokenResponse, err := GetTokenResponse(accountname, minValidPeriod, scope, applicationHint)
+	tokenResponse, err := getTokenResponse(accountname, minValidPeriod, scope, applicationHint)
 	return tokenResponse.Token, err
 }
 
-func GetAccessTokenByIssuerUrl(issuerURL string, minValidPeriod uint64, scope, applicationHint string) (token string, err error) {
-	tokenResponse, err := GetTokenResponseByIssuerUrl(issuerURL, minValidPeriod, scope, applicationHint)
+// GetAccessTokenByIssuerURL gets an access token by issuerURL
+func GetAccessTokenByIssuerURL(issuerURL string, minValidPeriod uint64, scope, applicationHint string) (token string, err error) {
+	tokenResponse, err := getTokenResponseByIssuerURL(issuerURL, minValidPeriod, scope, applicationHint)
 	return tokenResponse.Token, err
 }
