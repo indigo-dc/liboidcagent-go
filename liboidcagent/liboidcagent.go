@@ -44,32 +44,30 @@ func createTokenRequestIssuer(issuer string, min_valid_period uint64, scope stri
 	return _createTokenRequest(requestPartIss, min_valid_period, scope, application_hint)
 }
 
-//TODO error handling
-func communicateWithSock(request string) (response []byte, e error) {
+func communicateWithSock(request string) (response []byte, err error) {
 	socketValue, socketSet := os.LookupEnv("OIDC_SOCK")
 	if !socketSet {
-		fmt.Fprintln(os.Stderr, "$OIDC_SOCK not set")
-		return response, errors.New("$OIDC_SOCK not set")
+		err = errors.New("$OIDC_SOCK not set")
+		return
 	}
 
 	c, err := net.Dial("unix", socketValue)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not connect to socket %s: %s\n", socketValue, err.Error())
-		return response, err
+		err = fmt.Errorf("Dialing socket: %s", err)
+		return
 	}
 	defer c.Close()
 
 	_, err = c.Write([]byte(request))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not write to socket %s: %s\n", socketValue, err.Error())
-		return response, err
+		err = fmt.Errorf("Writing to socket: %s", err)
+		return
 	}
-	res, err := ioutil.ReadAll(c)
+	response, err = ioutil.ReadAll(c)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not read from socket %s: %s\n", socketValue, err.Error())
-		return response, err
+		err = fmt.Errorf("Reading from socket: %s", err)
 	}
-	return res, nil
+	return
 }
 
 func parseIpcResponse(response []byte) (tokenResponse TokenResponse, e error) {
