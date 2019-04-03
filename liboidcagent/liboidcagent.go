@@ -33,9 +33,9 @@ func createTokenRequest(requestPartAccIss string, minValidPeriod uint64, scope s
 	}
 	requestPartApplicationHint := ""
 	if applicationHint != "" {
-		requestPartScope = fmt.Sprintf(`,"applicationHint":"%s"`, applicationHint)
+		requestPartScope = fmt.Sprintf(`,"application_hint":"%s"`, applicationHint)
 	}
-	return fmt.Sprintf(`{"request":"access_token"%s,"minValidPeriod":%d%s%s}`, requestPartAccIss, minValidPeriod, requestPartScope, requestPartApplicationHint)
+	return fmt.Sprintf(`{"request":"access_token"%s,"min_valid_period":%d%s%s}`, requestPartAccIss, minValidPeriod, requestPartScope, requestPartApplicationHint)
 }
 
 func createTokenRequestAccount(accountname string, minValidPeriod uint64, scope string, applicationHint string) string {
