@@ -3,17 +3,42 @@ package liboidcagent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // TokenResponse is a parsed response from the oidc-agent
 type TokenResponse struct {
-	Token     string
-	Issuer    string
+	// The access token
+	Token string
+	// The provider that issued the token
+	Issuer string
+	// The time when the token expires
 	ExpiresAt time.Time
 }
 
-type rawTokenResponse struct {
+// TokenRequest is used to request an access token from the agent
+type TokenRequest struct {
+	// The account short name that should be used (Can be omitted if IssuerURL is
+	// specified)
+	ShortName string
+	// The IssuerURL for which an access token should be obtained (Can be omitted
+	// if ShortName is specified)
+	IssuerURL string
+	// MinValidPeriod specifies how long the access token should be valid at
+	// least. The time is given in seconds. Default is 0.
+	MinValidPeriod uint64
+	// The scopes for the requested access token
+	Scopes []string
+	// The audiences for the requested access token
+	Audiences []string
+	// An string describing the requesting application (i.e. its name). It might
+	// be displayed to the user, if the requested must be confirmed or an account
+	// configuration loaded.
+	ApplicationHint string
+}
+
+type tokenResponse struct {
 	Token     string `json:"access_token"`
 	Issuer    string `json:"issuer"`
 	ExpiresAt int64  `json:"expires_at"`
@@ -22,70 +47,67 @@ type rawTokenResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func createTokenRequest(requestPartAccIss string, minValidPeriod uint64, scope string, applicationHint, audience string) string {
-	requestPartScope := ""
-	if scope != "" {
-		requestPartScope = fmt.Sprintf(`,"scope":"%s"`, scope)
-	}
-	requestPartApplicationHint := ""
-	if applicationHint != "" {
-		requestPartApplicationHint = fmt.Sprintf(`,"application_hint":"%s"`, applicationHint)
-	}
-	requestPartAudience := ""
-	if audience != "" {
-		requestPartAudience = fmt.Sprintf(`,"audience":"%s"`, audience)
-	}
-	return fmt.Sprintf(`{"request":"access_token"%s,"min_valid_period":%d%s%s%s}`, requestPartAccIss, minValidPeriod, requestPartScope, requestPartApplicationHint, requestPartAudience)
+type tokenRequest struct {
+	Request         string `json:"request"`
+	AccountName     string `json:"account,omitempty"`
+	Issuer          string `json:"issuer,omitempty"`
+	Scope           string `json:"scope,omitempty"`
+	Audience        string `json:"audience,omitempty"`
+	ApplicationHint string `json:"application_hint,omitempty"`
+	MinValidPeriod  uint64 `json:"min_valid_period"`
 }
 
-func createTokenRequestAccount(accountname string, minValidPeriod uint64, scope string, applicationHint, audience string) string {
-	requestPartAcc := fmt.Sprintf(`,"account":"%s"`, accountname)
-	return createTokenRequest(requestPartAcc, minValidPeriod, scope, applicationHint, audience)
+func createTokenRequest(req TokenRequest) (string, error) {
+	request := tokenRequest{
+		Request:         "access_token",
+		AccountName:     req.ShortName,
+		Issuer:          req.IssuerURL,
+		Scope:           strings.Join(req.Scopes, " "),
+		Audience:        strings.Join(req.Audiences, " "),
+		ApplicationHint: req.ApplicationHint,
+		MinValidPeriod:  req.MinValidPeriod,
+	}
+	r, err := json.Marshal(request)
+	return string(r), err
 }
 
-func createTokenRequestIssuer(issuer string, minValidPeriod uint64, scope string, applicationHint, audience string) string {
-	requestPartIss := fmt.Sprintf(`,"issuer":"%s"`, issuer)
-	return createTokenRequest(requestPartIss, minValidPeriod, scope, applicationHint, audience)
-}
-
-func parseIpcResponse(remote bool, response []byte) (tokenResponse TokenResponse, err error) {
+func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err error) {
 	rem := ""
 	if remote {
-		rem = "Remote "
+		rem = "remote "
 	}
-	var res rawTokenResponse
-	err = json.Unmarshal(response, &res)
-	if err != nil {
-		err = fmt.Errorf("Unable to unmarshal: %s", response)
+	var rawResponse tokenResponse
+	if err = json.Unmarshal(response, &rawResponse); err != nil {
+		err = fmt.Errorf("unable to unmarshal: %s", response)
 		return
 	}
-	if res.Error != "" {
-		err = fmt.Errorf("%sAgent error: %s", rem, res.Error)
+	if rawResponse.Error != "" {
+		err = fmt.Errorf("%sagent error: %s", rem, rawResponse.Error)
 		return
 	}
-	if res.Status == "failure" {
+	if rawResponse.Status == "failure" {
 		err = fmt.Errorf("%sstatus is \"failure\"", rem)
 		return
 	}
-	tokenResponse = TokenResponse{
+	res = TokenResponse{
 		Token:     res.Token,
 		Issuer:    res.Issuer,
-		ExpiresAt: time.Unix(res.ExpiresAt, 0),
+		ExpiresAt: time.Unix(rawResponse.ExpiresAt, 0),
 	}
 	return
 }
 
-// GetTokenResponse gets a token response by accountname
-//
-// Deprecated: GetTokenResponse is deprecated and only exists for compatibility
-// reasons. New applications should use GetTokenResponse2 instead.
-func GetTokenResponse(accountname string, minValidPeriod uint64, scope, applicationHint string) (resp TokenResponse, err error) {
-	return GetTokenResponse2(accountname, minValidPeriod, scope, applicationHint, "")
-}
-
-// GetTokenResponse2 gets a token response by accountname
-func GetTokenResponse2(accountname string, minValidPeriod uint64, scope, applicationHint, audience string) (resp TokenResponse, err error) {
-	ipcReq := createTokenRequestAccount(accountname, minValidPeriod, scope, applicationHint, audience)
+// GetTokenResponse gets a token response
+func GetTokenResponse(req TokenRequest) (resp TokenResponse, err error) {
+	if req.ShortName == "" && req.IssuerURL == "" {
+		err = fmt.Errorf("'Shortname' and 'IssuerURL' both not provided")
+		return
+	}
+	ipcReq, err := createTokenRequest(req)
+	if err != nil {
+		err = fmt.Errorf("cannot create agent request: %s", err)
+		return
+	}
 	ipcResponse, err := communicateEncrypted(false, ipcReq)
 	if err != nil {
 		if err.Error() != "$OIDC_SOCK not set" {
@@ -102,7 +124,7 @@ func GetTokenResponse2(accountname string, minValidPeriod uint64, scope, applica
 	resp, err = parseIpcResponse(false, []byte(ipcResponse))
 	if err != nil && err.Error() == "Agent error: No account configured with that short name" {
 		localErr := err
-		//Try remote
+		// Try remote
 		ipcResponse, err = communicateEncrypted(true, ipcReq)
 		if err != nil {
 			if err.Error() == "$OIDC_REMOTE_SOCK not set" {
@@ -115,51 +137,8 @@ func GetTokenResponse2(accountname string, minValidPeriod uint64, scope, applica
 	return
 }
 
-// GetTokenResponseByIssuerURL gets a token response by issuerURL
-//
-// Deprecated: GetTokenResponseByIssuerURL is deprecated and only exists for
-// compatibility reasons. New applications should use
-// GetTokenResponseByIssuerURL2 instead.
-func GetTokenResponseByIssuerURL(issuer string, minValidPeriod uint64, scope, applicationHint string) (tokenResponse TokenResponse, err error) {
-	return GetTokenResponseByIssuerURL2(issuer, minValidPeriod, scope, applicationHint, "")
-}
-
-// GetTokenResponseByIssuerURL2 gets a token response by issuerURL
-func GetTokenResponseByIssuerURL2(issuer string, minValidPeriod uint64, scope, applicationHint, audience string) (tokenResponse TokenResponse, err error) {
-	ipcReq := createTokenRequestIssuer(issuer, minValidPeriod, scope, applicationHint, audience)
-	response, err := communicateEncrypted(false, ipcReq)
-	if err != nil {
-		err = fmt.Errorf("Communicating with socket: %s", err)
-		return
-	}
-	tokenResponse, err = parseIpcResponse(false, []byte(response))
-	return
-}
-
-// GetAccessToken gets an access token by accountname
-//
-// Deprecated: GetAccessToken is deprecated and only exists for compatibility
-// reasons. New applications should use GetAccessToken2 instead.
-func GetAccessToken(accountname string, minValidPeriod uint64, scope, applicationHint string) (token string, err error) {
-	return GetAccessToken2(accountname, minValidPeriod, scope, applicationHint, "")
-}
-
-// GetAccessToken2 gets an access token by accountname
-func GetAccessToken2(accountname string, minValidPeriod uint64, scope, applicationHint, audience string) (token string, err error) {
-	tokenResponse, err := GetTokenResponse2(accountname, minValidPeriod, scope, applicationHint, audience)
-	return tokenResponse.Token, err
-}
-
-// GetAccessTokenByIssuerURL gets an access token by issuerURL
-//
-// Deprecated: GetAccessTokenByIssuerURL is deprecated and only exists for compatibility
-// reasons. New applications should use GetAccessTokenByIssuerURL2 instead.
-func GetAccessTokenByIssuerURL(issuerURL string, minValidPeriod uint64, scope, applicationHint string) (token string, err error) {
-	return GetAccessTokenByIssuerURL2(issuerURL, minValidPeriod, scope, applicationHint, "")
-}
-
-// GetAccessTokenByIssuerURL2 gets an access token by issuerURL
-func GetAccessTokenByIssuerURL2(issuerURL string, minValidPeriod uint64, scope, applicationHint, audience string) (token string, err error) {
-	tokenResponse, err := GetTokenResponseByIssuerURL2(issuerURL, minValidPeriod, scope, applicationHint, audience)
-	return tokenResponse.Token, err
+// GetAccessToken gets an access token
+func GetAccessToken(req TokenRequest) (string, error) {
+	res, err := GetTokenResponse(req)
+	return res.Token, err
 }
