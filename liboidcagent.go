@@ -90,8 +90,8 @@ func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err erro
 		return
 	}
 	res = TokenResponse{
-		Token:     res.Token,
-		Issuer:    res.Issuer,
+		Token:     rawResponse.Token,
+		Issuer:    rawResponse.Issuer,
 		ExpiresAt: time.Unix(rawResponse.ExpiresAt, 0),
 	}
 	return
