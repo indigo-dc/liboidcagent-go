@@ -1,4 +1,4 @@
-module github.com/indigo-db/liboidcagent
+module github.com/indigo-db/liboidcagent-go
 
 go 1.11
 
