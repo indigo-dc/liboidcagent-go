@@ -7,6 +7,48 @@ import (
 	"time"
 )
 
+// OIDCAgentError is an error type used for returning errors
+type OIDCAgentError struct {
+	err    string
+	help   string
+	remote bool
+}
+
+func (e *OIDCAgentError) Error() string {
+	rem := ""
+	if e.remote {
+		rem = "(remote) "
+	}
+	return fmt.Sprintf("oidc-agent %serror: %s", rem, e.err)
+}
+
+// Help returns a help message if available. This help message helps the user to
+// solve the problem. If a help message is available it SHOULD be displayed to
+// the user. One can use ErrorWithHelp to obtain both.
+func (e *OIDCAgentError) Help() string {
+	return e.help
+}
+
+// ErrorWithHelp returns a string combining the error message and the help
+// message (if available).
+func (e *OIDCAgentError) ErrorWithHelp() string {
+	help := e.Help()
+	err := e.Error()
+	if help != "" {
+		return fmt.Sprintf("%s\n%s", err, help)
+	}
+	return err
+}
+
+func oidcAgentErrorWrap(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &OIDCAgentError{
+		err: err.Error(),
+	}
+}
+
 // TokenResponse is a parsed response from the oidc-agent
 type TokenResponse struct {
 	// The access token
@@ -32,8 +74,8 @@ type TokenRequest struct {
 	Scopes []string
 	// The audiences for the requested access token
 	Audiences []string
-	// An string describing the requesting application (i.e. its name). It might
-	// be displayed to the user, if the requested must be confirmed or an account
+	// A string describing the requesting application (i.e. its name). It might
+	// be displayed to the user, if the request must be confirmed or an account
 	// configuration loaded.
 	ApplicationHint string
 }
@@ -45,6 +87,7 @@ type tokenResponse struct {
 
 	Status string `json:"status,omitempty"`
 	Error  string `json:"error,omitempty"`
+	Help   string `json:"info,omitempty"`
 }
 
 type tokenRequest struct {
@@ -72,21 +115,24 @@ func createTokenRequest(req TokenRequest) (string, error) {
 }
 
 func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err error) {
-	rem := ""
-	if remote {
-		rem = "remote "
-	}
 	var rawResponse tokenResponse
 	if err = json.Unmarshal(response, &rawResponse); err != nil {
-		err = fmt.Errorf("unable to unmarshal: %s", response)
+		err = oidcAgentErrorWrap(fmt.Errorf("unable to unmarshal: %s", response))
 		return
 	}
 	if rawResponse.Error != "" {
-		err = fmt.Errorf("%sagent error: %s", rem, rawResponse.Error)
+		err = &OIDCAgentError{
+			err:    rawResponse.Error,
+			help:   rawResponse.Help,
+			remote: remote,
+		}
 		return
 	}
 	if rawResponse.Status == "failure" {
-		err = fmt.Errorf("%sstatus is \"failure\"", rem)
+		err = &OIDCAgentError{
+			err:    "unknown error",
+			remote: remote,
+		}
 		return
 	}
 	res = TokenResponse{
@@ -100,34 +146,35 @@ func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err erro
 // GetTokenResponse gets a token response
 func GetTokenResponse(req TokenRequest) (resp TokenResponse, err error) {
 	if req.ShortName == "" && req.IssuerURL == "" {
-		err = fmt.Errorf("'Shortname' and 'IssuerURL' both not provided")
+		err = &OIDCAgentError{err: "'Shortname' and 'IssuerURL' both not provided"}
 		return
 	}
 	ipcReq, err := createTokenRequest(req)
 	if err != nil {
-		err = fmt.Errorf("cannot create agent request: %s", err)
+		err = oidcAgentErrorWrap(fmt.Errorf("cannot create agent request: %s", err))
 		return
 	}
 	ipcResponse, err := communicateEncrypted(false, ipcReq)
 	if err != nil {
-		if err.Error() != "$OIDC_SOCK not set" {
+		err = oidcAgentErrorWrap(err)
+		if strings.Contains(err.Error(), "$OIDC_SOCK not set") {
 			return
 		}
 		ipcResponse, err = communicateEncrypted(true, ipcReq)
 		if err != nil {
-			err = fmt.Errorf("$OIDC_SOCK not set and %s on remote", err)
+			err = oidcAgentErrorWrap(fmt.Errorf("$OIDC_SOCK not set and %s on remote", err))
 			return
 		}
 		resp, err = parseIpcResponse(true, []byte(ipcResponse))
 		return
 	}
 	resp, err = parseIpcResponse(false, []byte(ipcResponse))
-	if err != nil && err.Error() == "Agent error: No account configured with that short name" {
+	if err != nil && strings.Contains(err.Error(), "No account configured with that short name") {
 		localErr := err
 		// Try remote
 		ipcResponse, err = communicateEncrypted(true, ipcReq)
 		if err != nil {
-			if err.Error() == "$OIDC_REMOTE_SOCK not set" {
+			if strings.Contains(err.Error(), "$OIDC_REMOTE_SOCK not set") {
 				err = localErr
 			}
 			return
