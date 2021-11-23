@@ -1,53 +1,13 @@
 package liboidcagent
 
 import (
-	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"strings"
 	"time"
+
+	"github.com/adrg/xdg"
 )
-
-// OIDCAgentError is an error type used for returning errors
-type OIDCAgentError struct {
-	err    string
-	help   string
-	remote bool
-}
-
-func (e *OIDCAgentError) Error() string {
-	rem := ""
-	if e.remote {
-		rem = "(remote) "
-	}
-	return fmt.Sprintf("oidc-agent %serror: %s", rem, e.err)
-}
-
-// Help returns a help message if available. This help message helps the user to
-// solve the problem. If a help message is available it SHOULD be displayed to
-// the user. One can use ErrorWithHelp to obtain both.
-func (e *OIDCAgentError) Help() string {
-	return e.help
-}
-
-// ErrorWithHelp returns a string combining the error message and the help
-// message (if available).
-func (e *OIDCAgentError) ErrorWithHelp() string {
-	help := e.Help()
-	err := e.Error()
-	if help != "" {
-		return fmt.Sprintf("%s\n%s", err, help)
-	}
-	return err
-}
-
-func oidcAgentErrorWrap(err error) error {
-	if err == nil {
-		return nil
-	}
-	return &OIDCAgentError{
-		err: err.Error(),
-	}
-}
 
 // TokenResponse is a parsed response from the oidc-agent
 type TokenResponse struct {
@@ -61,10 +21,9 @@ type TokenResponse struct {
 
 // TokenRequest is used to request an access token from the agent
 type TokenRequest struct {
-	// The account short name that should be used (Can be omitted if IssuerURL is
-	// specified)
+	// ShortName that should be used (Can be omitted if IssuerURL is specified)
 	ShortName string
-	// The IssuerURL for which an access token should be obtained (Can be omitted
+	// IssuerURL for which an access token should be obtained (Can be omitted
 	// if ShortName is specified)
 	IssuerURL string
 	// MinValidPeriod specifies how long the access token should be valid at
@@ -100,38 +59,19 @@ type tokenRequest struct {
 	MinValidPeriod  uint64 `json:"min_valid_period"`
 }
 
-func createTokenRequest(req TokenRequest) (string, error) {
-	request := tokenRequest{
-		Request:         "access_token",
-		AccountName:     req.ShortName,
-		Issuer:          req.IssuerURL,
-		Scope:           strings.Join(req.Scopes, " "),
-		Audience:        strings.Join(req.Audiences, " "),
-		ApplicationHint: req.ApplicationHint,
-		MinValidPeriod:  req.MinValidPeriod,
-	}
-	r, err := json.Marshal(request)
-	return string(r), err
-}
-
-func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err error) {
-	var rawResponse tokenResponse
-	if err = json.Unmarshal(response, &rawResponse); err != nil {
-		err = oidcAgentErrorWrap(fmt.Errorf("unable to unmarshal: %s", response))
-		return
-	}
+func (c *agentConnection) parseTokenResponse(rawResponse tokenResponse) (res TokenResponse, err error) {
 	if rawResponse.Error != "" {
-		err = &OIDCAgentError{
+		err = OIDCAgentError{
 			err:    rawResponse.Error,
 			help:   rawResponse.Help,
-			remote: remote,
+			remote: c.Socket.Remote,
 		}
 		return
 	}
 	if rawResponse.Status == "failure" {
-		err = &OIDCAgentError{
+		err = OIDCAgentError{
 			err:    "unknown error",
-			remote: remote,
+			remote: c.Socket.Remote,
 		}
 		return
 	}
@@ -146,41 +86,31 @@ func parseIpcResponse(remote bool, response []byte) (res TokenResponse, err erro
 // GetTokenResponse gets a token response
 func GetTokenResponse(req TokenRequest) (resp TokenResponse, err error) {
 	if req.ShortName == "" && req.IssuerURL == "" {
-		err = &OIDCAgentError{err: "'Shortname' and 'IssuerURL' both not provided"}
+		err = OIDCAgentError{err: "'Shortname' and 'IssuerURL' both not provided"}
 		return
 	}
-	ipcReq, err := createTokenRequest(req)
+	conn, err := newEncryptedConn()
 	if err != nil {
-		err = oidcAgentErrorWrap(fmt.Errorf("cannot create agent request: %s", err))
 		return
 	}
-	ipcResponse, err := communicateEncrypted(false, ipcReq)
+	defer conn.close()
+
+	rawReq := tokenRequest{
+		Request:         "access_token",
+		AccountName:     req.ShortName,
+		Issuer:          req.IssuerURL,
+		Scope:           strings.Join(req.Scopes, " "),
+		Audience:        strings.Join(req.Audiences, " "),
+		ApplicationHint: req.ApplicationHint,
+		MinValidPeriod:  req.MinValidPeriod,
+	}
+	var rawResp tokenResponse
+	err = conn.sendJSONRequest(rawReq, &rawResp)
 	if err != nil {
-		err = oidcAgentErrorWrap(err)
-		if strings.Contains(err.Error(), "$OIDC_SOCK not set") {
-			return
-		}
-		ipcResponse, err = communicateEncrypted(true, ipcReq)
-		if err != nil {
-			err = oidcAgentErrorWrap(fmt.Errorf("$OIDC_SOCK not set and %s on remote", err))
-			return
-		}
-		resp, err = parseIpcResponse(true, []byte(ipcResponse))
 		return
 	}
-	resp, err = parseIpcResponse(false, []byte(ipcResponse))
-	if err != nil && strings.Contains(err.Error(), "No account configured with that short name") {
-		localErr := err
-		// Try remote
-		ipcResponse, err = communicateEncrypted(true, ipcReq)
-		if err != nil {
-			if strings.Contains(err.Error(), "$OIDC_REMOTE_SOCK not set") {
-				err = localErr
-			}
-			return
-		}
-		resp, err = parseIpcResponse(true, []byte(ipcResponse))
-	}
+
+	resp, err = conn.parseTokenResponse(rawResp)
 	return
 }
 
