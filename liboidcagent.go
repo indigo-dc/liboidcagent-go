@@ -119,3 +119,54 @@ func GetAccessToken(req TokenRequest) (string, error) {
 	res, err := GetTokenResponse(req)
 	return res.Token, err
 }
+
+func getLoadedAccounts() (accountNames []string, err error) {
+	conn, err := newEncryptedConn()
+	if err != nil {
+		return
+	}
+	defer conn.close()
+
+	req := map[string]string{"request": "loaded_accounts"}
+	var resp struct {
+		Status   string   `json:"status"`
+		Error    string   `json:"error,omitempty"`
+		Accounts []string `json:"info,omitempty"`
+	}
+
+	err = conn.sendJSONRequest(req, &resp)
+	if err != nil {
+		return
+	}
+
+	if resp.Status == "success" {
+		accountNames = resp.Accounts
+		return
+	}
+	err = fmt.Errorf("Error on account request (status: %s): %s", resp.Status, resp.Error)
+	return
+}
+
+// GetLoadedAccounts returns a list of all accounts which are currently loaded by oidc-agent
+func GetLoadedAccounts() (accountNames []string, err error) {
+	accountNames, err = getLoadedAccounts()
+	if err != nil {
+		err = oidcAgentErrorWrap(err)
+	}
+	return
+}
+
+// GetConfiguredAccounts returns a list of all accounts which are configured for oidc-agent
+func GetConfiguredAccounts() (accounts []string) {
+	accounts = []string{}
+	infos, err := ioutil.ReadDir(xdg.ConfigHome + "/oidc-agent")
+	if err != nil {
+		return
+	}
+	for _, info := range infos {
+		if info.Name() != "issuer.config" && !info.IsDir() {
+			accounts = append(accounts, info.Name())
+		}
+	}
+	return accounts
+}
