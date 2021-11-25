@@ -83,7 +83,7 @@ func (c *agentConnection) parseTokenResponse(rawResponse tokenResponse) (res Tok
 	return
 }
 
-// GetTokenResponse gets a token response
+// GetTokenResponse gets a TokenResponse
 func GetTokenResponse(req TokenRequest) (resp TokenResponse, err error) {
 	if req.ShortName == "" && req.IssuerURL == "" {
 		err = OIDCAgentError{err: "'Shortname' and 'IssuerURL' both not provided"}
@@ -143,7 +143,7 @@ func getLoadedAccounts() (accountNames []string, err error) {
 		accountNames = resp.Accounts
 		return
 	}
-	err = fmt.Errorf("Error on account request (status: %s): %s", resp.Status, resp.Error)
+	err = fmt.Errorf("error on account request (status: %s): %s", resp.Status, resp.Error)
 	return
 }
 
