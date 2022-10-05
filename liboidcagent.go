@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/adrg/xdg"
+	mytoken "github.com/oidc-mytoken/api/v0"
 )
 
 // TokenResponse is a parsed response from the oidc-agent
@@ -15,6 +16,16 @@ type TokenResponse struct {
 	Token string
 	// The provider that issued the token
 	Issuer string
+	// The time when the token expires
+	ExpiresAt time.Time
+}
+
+// MytokenResponse is a parse response from the oidc-agent compatible with the struct from the mytoken api,
+// but with ExpiresAt set instead of ExpiresIn
+type MytokenResponse struct {
+	mytoken.MytokenResponse
+	OIDCIssuer    string
+	MytokenIssuer string
 	// The time when the token expires
 	ExpiresAt time.Time
 }
@@ -39,10 +50,26 @@ type TokenRequest struct {
 	ApplicationHint string
 }
 
+// MytokenRequest is used to request a  mytoken from the agent
+type MytokenRequest struct {
+	// ShortName that should be used
+	ShortName string
+	// A mytoken profile describing the properties of the requested mytoken
+	MytokenProfile string
+	// A string describing the requesting application (i.e. its name). It might
+	// be displayed to the user, if the request must be confirmed or an account
+	// configuration loaded.
+	ApplicationHint string
+}
+
 type tokenResponse struct {
 	Token     string `json:"access_token"`
 	Issuer    string `json:"issuer"`
 	ExpiresAt int64  `json:"expires_at"`
+
+	mytoken.MytokenResponse
+	OIDCIssuer    string `json:"oidc_issuer"`
+	MytokenIssuer string `json:"mytoken_issuer"`
 
 	Status string `json:"status,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -57,6 +84,7 @@ type tokenRequest struct {
 	Audience        string `json:"audience,omitempty"`
 	ApplicationHint string `json:"application_hint,omitempty"`
 	MinValidPeriod  uint64 `json:"min_valid_period"`
+	MytokenProfile  string `json:"mytoken_profile"`
 }
 
 func (c *agentConnection) parseTokenResponse(rawResponse tokenResponse) (res TokenResponse, err error) {
@@ -79,6 +107,31 @@ func (c *agentConnection) parseTokenResponse(rawResponse tokenResponse) (res Tok
 		Token:     rawResponse.Token,
 		Issuer:    rawResponse.Issuer,
 		ExpiresAt: time.Unix(rawResponse.ExpiresAt, 0),
+	}
+	return
+}
+
+func (c *agentConnection) parseMytokenResponse(rawResponse tokenResponse) (res MytokenResponse, err error) {
+	if rawResponse.Error != "" {
+		err = OIDCAgentError{
+			err:    rawResponse.Error,
+			help:   rawResponse.Help,
+			remote: c.Socket.Remote,
+		}
+		return
+	}
+	if rawResponse.Status == "failure" {
+		err = OIDCAgentError{
+			err:    "unknown error",
+			remote: c.Socket.Remote,
+		}
+		return
+	}
+	res = MytokenResponse{
+		MytokenResponse: rawResponse.MytokenResponse,
+		OIDCIssuer:      rawResponse.OIDCIssuer,
+		MytokenIssuer:   rawResponse.MytokenIssuer,
+		ExpiresAt:       time.Unix(rawResponse.ExpiresAt, 0),
 	}
 	return
 }
@@ -118,6 +171,40 @@ func GetTokenResponse(req TokenRequest) (resp TokenResponse, err error) {
 func GetAccessToken(req TokenRequest) (string, error) {
 	res, err := GetTokenResponse(req)
 	return res.Token, err
+}
+
+// GetMytokenResponse gets a mytoken response from the agent
+func GetMytokenResponse(req MytokenRequest) (resp MytokenResponse, err error) {
+	if req.ShortName == "" {
+		err = OIDCAgentError{err: "'Shortname' not provided"}
+		return
+	}
+	conn, err := newEncryptedConn()
+	if err != nil {
+		return
+	}
+	defer conn.close()
+
+	rawReq := tokenRequest{
+		Request:         "mytoken",
+		AccountName:     req.ShortName,
+		MytokenProfile:  req.MytokenProfile,
+		ApplicationHint: req.ApplicationHint,
+	}
+	var rawResp tokenResponse
+	err = conn.sendJSONRequest(rawReq, &rawResp)
+	if err != nil {
+		return
+	}
+
+	resp, err = conn.parseMytokenResponse(rawResp)
+	return
+}
+
+// GetMytoken gets an mytoken
+func GetMytoken(req MytokenRequest) (string, error) {
+	res, err := GetMytokenResponse(req)
+	return res.Mytoken, err
 }
 
 func getLoadedAccounts() (accountNames []string, err error) {
