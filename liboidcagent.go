@@ -1,12 +1,11 @@
 package liboidcagent
 
 import (
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"strings"
 	"time"
 
-	"github.com/adrg/xdg"
 	mytoken "github.com/oidc-mytoken/api/v0"
 )
 
@@ -28,6 +27,17 @@ type MytokenResponse struct {
 	MytokenIssuer string
 	// The time when the token expires
 	ExpiresAt time.Time
+}
+
+// AccountInfoResponse holds information about the available accounts and issuers
+type AccountInfoResponse map[string]IssuerInfo
+
+// IssuerInfo is a type for holding information about a supported issuer
+type IssuerInfo struct {
+	// Indicates whether a public client for this issuer is available or not
+	HasPubClient bool `json:"pubclient"`
+	// Maps account short names to a bool indicating if this account is currently loaded or not
+	Accounts map[string]bool `json:"accounts"`
 }
 
 // TokenRequest is used to request an access token from the agent
@@ -74,6 +84,13 @@ type tokenResponse struct {
 	Status string `json:"status,omitempty"`
 	Error  string `json:"error,omitempty"`
 	Help   string `json:"info,omitempty"`
+}
+
+type infoResponse struct {
+	Info json.RawMessage `json:"info"`
+
+	Status string `json:"status,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 type tokenRequest struct {
@@ -244,16 +261,52 @@ func GetLoadedAccounts() (accountNames []string, err error) {
 }
 
 // GetConfiguredAccounts returns a list of all accounts which are configured for oidc-agent
-func GetConfiguredAccounts() (accounts []string) {
-	accounts = []string{}
-	infos, err := ioutil.ReadDir(xdg.ConfigHome + "/oidc-agent")
+func GetConfiguredAccounts() (accounts []string, err error) {
+	accountInfo, err := GetAccountInfos()
+	if err != nil {
+		return nil, err
+	}
+	for _, i := range accountInfo {
+		for a := range i.Accounts {
+			accounts = append(accounts, a)
+		}
+	}
+	return
+}
+
+func getAccountInfos() (accountInfos AccountInfoResponse, err error) {
+	conn, err := newEncryptedConn()
 	if err != nil {
 		return
 	}
-	for _, info := range infos {
-		if info.Name() != "issuer.config" && !info.IsDir() {
-			accounts = append(accounts, info.Name())
-		}
+	defer conn.close()
+
+	req := map[string]string{"request": "account_info"}
+	var resp infoResponse
+
+	err = conn.sendJSONRequest(req, &resp)
+	if err != nil {
+		return
 	}
-	return accounts
+
+	if resp.Status != "success" {
+		err = fmt.Errorf("error on account info request (status: %s): %s", resp.Status, resp.Error)
+		return
+	}
+	err = json.Unmarshal(resp.Info, &accountInfos)
+	if err != nil {
+		err = fmt.Errorf("error on account info request: account info malformed: %s", err.Error())
+		return
+	}
+	return
+}
+
+// GetAccountInfos returns information about all issuers and their available account names and if those are loaded or
+// not
+func GetAccountInfos() (info AccountInfoResponse, err error) {
+	info, err = getAccountInfos()
+	if err != nil {
+		err = oidcAgentErrorWrap(err)
+	}
+	return
 }
